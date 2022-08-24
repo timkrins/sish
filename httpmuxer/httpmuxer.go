@@ -7,7 +7,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -49,10 +49,21 @@ func Start(state *utils.State) {
 
 		// Here is where we check whether or not an IP is blocked.
 		clientIPAddr, _, err := net.SplitHostPort(c.Request.RemoteAddr)
-		if state.IPFilter.Blocked(c.ClientIP()) || state.IPFilter.Blocked(clientIPAddr) || err != nil {
-			c.AbortWithStatus(http.StatusForbidden)
+		clientIPAddrBlocked := state.IPFilter.Blocked(clientIPAddr)
+		cClientIP := c.ClientIP()
+		cClientIPBlocked := state.IPFilter.Blocked(cClientIP)
+
+		if clientIPAddrBlocked || cClientIPBlocked || err != nil {
+			status := http.StatusForbidden
+			c.AbortWithStatus(status)
 			if viper.GetBool("debug") {
-				log.Println("Aborted: Forbidden:", c.Request.RemoteAddr)
+				log.Println("Aborting with status", status)
+				if clientIPAddrBlocked {
+					log.Println("Blocked:", clientIPAddr)
+				}
+				if cClientIPBlocked {
+					log.Println("Blocked:", cClientIP)
+				}
 			}
 			return
 		}
@@ -168,9 +179,10 @@ func Start(state *utils.State) {
 				return
 			}
 
-			c.AbortWithStatus(http.StatusNotFound)
+			status := http.StatusNotFound
+			c.AbortWithStatus(status)
 			if viper.GetBool("debug") {
-				log.Println("Aborted: NotFound:", c.Request.URL.Path)
+				log.Println("Aborting with status", status)
 			}
 			return
 		}
@@ -187,9 +199,10 @@ func Start(state *utils.State) {
 
 		if authNeeded {
 			c.Header("WWW-Authenticate", "Basic realm=\"sish\"")
-			c.AbortWithStatus(http.StatusUnauthorized)
+			status := http.StatusUnauthorized
+			c.AbortWithStatus(status)
 			if viper.GetBool("debug") {
-				log.Println("Aborted: Unauthorized")
+				log.Println("Aborting with status", status)
 			}
 			return
 		}
@@ -243,13 +256,13 @@ func Start(state *utils.State) {
 			return
 		}
 
-		reqBody, err := ioutil.ReadAll(c.Request.Body)
+		reqBody, err := io.ReadAll(c.Request.Body)
 		if err != nil {
 			log.Println("Error reading request body:", err)
 			return
 		}
 
-		c.Request.Body = ioutil.NopCloser(bytes.NewBuffer(reqBody))
+		c.Request.Body = io.NopCloser(bytes.NewBuffer(reqBody))
 
 		err = forward.ResponseModifier(ResponseModifier(state, hostname, reqBody, c, currentListener))(currentListener.Forward)
 		if err != nil {
